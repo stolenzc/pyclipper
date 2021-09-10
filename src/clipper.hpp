@@ -31,8 +31,8 @@
 *                                                                              *
 *******************************************************************************/
 
-#ifndef clipper_hpp
-#define clipper_hpp
+#ifndef clipper_hpp_
+#define clipper_hpp_
 
 #define CLIPPER_VERSION "6.4.2"
 
@@ -155,6 +155,7 @@ private:
     void AddChild(PolyNode& child);
     friend class Clipper; //to access Index
     friend class ClipperOffset; 
+    friend class ClipperOffsetEx;
 };
 
 class PolyTree: public PolyNode
@@ -385,6 +386,43 @@ private:
   void DoSquare(int j, int k);
   void DoMiter(int j, int k, double r);
   void DoRound(int j, int k);
+
+  friend class ClipperOffsetEx;
+};
+//------------------------------------------------------------------------------
+
+class ClipperOffsetEx: public ClipperOffset // 非等比缩放
+{
+public:
+    ClipperOffsetEx(double miterLimit = 2.0, double roundPrecision = 0.25);
+    void Execute(Paths& solution, double ldelta, double rdelta, double tdelta, double bdelta, double sdelta);
+
+private:
+
+    const cInt sthreshold = 99999*1000;
+
+    IntRect m_boudingBox;
+
+    double m_ldelta, m_lsin, m_lcos, m_lStepsPerRad;
+    double m_rdelta, m_rsin, m_rcos, m_rStepsPerRad;
+    double m_tdelta, m_tsin, m_tcos, m_tStepsPerRad;
+    double m_bdelta, m_bsin, m_bcos, m_bStepsPerRad;
+    double m_sdelta, m_ssin, m_scos, m_sStepsPerRad;
+    double m_ddelta, m_dsin, m_dcos, m_dStepsPerRad;
+
+    std::vector<double> m_deltas, m_sins, m_coss, m_StepsPerRads;
+
+    IntRect calcBoundingBox(const Path& path);
+
+    std::string deduceSegmentRole(const IntPoint &pt1, const IntPoint &pt2, const DoublePoint& normal);
+    std::string matchPatternRegular(int j, int k, double& delta, double& sin, double& cos, double& StepsPerRad);
+    std::string matchPatternIrregular(int j, int k, double& delta, double& sin, double& cos, double& StepsPerRad);
+
+    void DoOffset(double ldelta, double rdelta, double tdelta, double bdelta, double sdelta);
+    void OffsetPoint(int j, int& k, JoinType jointype);
+    void DoSquare(int j, int k);
+    void DoMiter(int j, int k, double r);
+    void DoRound(int j, int k);
 };
 //------------------------------------------------------------------------------
 
