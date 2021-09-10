@@ -191,6 +191,15 @@ cdef extern from "clipper.hpp" namespace "ClipperLib":
         double MiterLimit
         double ArcTolerance
 
+    cdef cppclass ClipperOffsetEx:
+        ClipperOffsetEx(double miterLimit, double roundPrecision)
+        void Execute(Paths& solution, double ldelta, double rdelta, double tdelta, double bdelta, double sdelta) nogil
+        void AddPath(Path & path, JoinType joinType, EndType endType)
+        void AddPaths(Paths & paths, JoinType joinType, EndType endType)
+        void Clear()
+        double MiterLimit
+        double ArcTolerance
+
     # prefixes are added to original functions to prevent naming collisions
     bool c_Orientation "Orientation"(const Path & poly) nogil
     double c_Area "Area"(const Path & poly) nogil
@@ -852,6 +861,88 @@ cdef class PyclipperOffset:
         an offsetting operation.
 
         More info: http://www.angusj.com/delphi/clipper/documentation/Docs/Units/ClipperLib/Classes/ClipperOffset/Properties/ArcTolerance.htm
+        """
+        def __get__(self):
+            return self.thisptr.ArcTolerance
+
+        def __set__(self, value):
+            self.thisptr.ArcTolerance = value
+
+
+cdef class PyclipperOffsetEx():
+    """
+    Wraps the ClipperOffsetEx class.
+    """
+
+    cdef ClipperOffsetEx *thisptr
+
+    def __cinit__(self, double miter_limit=2.0, double arc_tolerance=0.25):
+        log_action("Creating an ClipperOffsetEx instance")
+        self.thisptr = new ClipperOffsetEx(miter_limit, arc_tolerance)
+
+    def __dealloc__(self):
+        log_action("Deleting the ClipperOffset instance")
+        del self.thisptr
+
+    def AddPath(self, path, JoinType join_type, EndType end_type):
+        """ Add individual path.
+        Keyword arguments:
+        path      -- path to be added
+        join_type -- join type of added path
+        end_type  -- end type of added path
+        """
+        cdef Path c_path = _to_clipper_path(path)
+        self.thisptr.AddPath(c_path, join_type, end_type)
+
+    def AddPaths(self, paths, JoinType join_type, EndType end_type):
+        """ Add a list of paths.
+        Keyword arguments:
+        path      -- paths to be added
+        join_type -- join type of added paths
+        end_type  -- end type of added paths
+        """
+        cdef Paths c_paths = _to_clipper_paths(paths)
+        self.thisptr.AddPaths(c_paths, join_type, end_type)
+
+    def Execute(self, double ldelta, double rdelta, double tdelta, double bdelta, double sdelta):
+        """ Performs the offset operation and returns a list of offset paths.\
+
+        Keyword arguments:
+        ldelta -- amount to which the supplied paths will be offset left - negative delta shrinks polygons,
+                  positive delta expands them.
+        rdelta -- amount to which the supplied paths will be offset right - negative delta shrinks polygons,
+                  positive delta expands them.
+        tdelta -- amount to which the supplied paths will be offset top - negative delta shrinks polygons,
+                  positive delta expands them.
+        bdelta -- amount to which the supplied paths will be offset bottom - negative delta shrinks polygons,
+                  positive delta expands them.
+
+        Returns:
+        list of offset paths
+        """
+        cdef Paths c_solution
+        with nogil:
+            self.thisptr.Execute(c_solution, ldelta, rdelta, tdelta, bdelta, sdelta)
+        return _from_clipper_paths(c_solution)
+
+    def Clear(self):
+        """ Clears all paths.
+        """
+        self.thisptr.Clear()
+
+    property MiterLimit:
+        """ Maximum distance in multiples of delta that vertices can be offset from their
+        original positions.
+        """
+        def __get__(self):
+            return <double> self.thisptr.MiterLimit
+
+        def __set__(self, value):
+            self.thisptr.MiterLimit = <double> value
+
+    property ArcTolerance:
+        """ Maximum acceptable imprecision when arcs are approximated in
+        an offsetting operation.
         """
         def __get__(self):
             return self.thisptr.ArcTolerance

@@ -153,8 +153,8 @@ void PolyTree::Clear()
 {
     for (PolyNodes::size_type i = 0; i < AllNodes.size(); ++i)
       delete AllNodes[i];
-    AllNodes.resize(0); 
-    Childs.resize(0);
+    AllNodes.clear();
+    Childs.clear();
 }
 //------------------------------------------------------------------------------
 
@@ -712,6 +712,7 @@ void DisposeOutPts(OutPt*& pp)
     OutPt *tmpPp = pp;
     pp = pp->Next;
     delete tmpPp;
+    tmpPp = nullptr;
   }
 }
 //------------------------------------------------------------------------------
@@ -4329,10 +4330,10 @@ double DistanceFromLineSqrd(
   const IntPoint& pt, const IntPoint& ln1, const IntPoint& ln2)
 {
   //The equation of a line in general form (Ax + By + C = 0)
-  //given 2 points (x�,y�) & (x�,y�) is ...
-  //(y� - y�)x + (x� - x�)y + (y� - y�)x� - (x� - x�)y� = 0
-  //A = (y� - y�); B = (x� - x�); C = (y� - y�)x� - (x� - x�)y�
-  //perpendicular distance of point (x�,y�) = (Ax� + By� + C)/Sqrt(A� + B�)
+  //given 2 points (x�,y�) & (x�,y�) is ...
+  //(y� - y�)x + (x� - x�)y + (y� - y�)x� - (x� - x�)y� = 0
+  //A = (y� - y�); B = (x� - x�); C = (y� - y�)x� - (x� - x�)y�
+  //perpendicular distance of point (x�,y�) = (Ax� + By� + C)/Sqrt(A� + B�)
   //see http://en.wikipedia.org/wiki/Perpendicular_distance
   double A = double(ln1.Y - ln2.Y);
   double B = double(ln2.X - ln1.X);
@@ -4624,6 +4625,567 @@ std::ostream& operator <<(std::ostream &s, const Paths &p)
   s << "\n";
   return s;
 }
+
+ClipperOffsetEx::ClipperOffsetEx(double miterLimit, double arcTolerance)
+{
+  this->MiterLimit = miterLimit;
+  this->ArcTolerance = arcTolerance;
+  m_lowest.X = -1;
+}
+
+void ClipperOffsetEx::Execute(Paths &solution, double ldelta, double rdelta, double tdelta, double bdelta, double sdelta)
+{
+    // 要求符号相同
+    // ((NEAR_ZERO(ldelta) || ldelta > 0) && (NEAR_ZERO(rdelta) || rdelta > 0) && (NEAR_ZERO(tdelta) || tdelta > 0) && (NEAR_ZERO(bdelta) || bdelta > 0) && (NEAR_ZERO(sdelta) || sdelta > 0)) ||
+    // ((NEAR_ZERO(ldelta) || ldelta < 0) && (NEAR_ZERO(rdelta) || rdelta < 0) && (NEAR_ZERO(tdelta) || tdelta < 0) && (NEAR_ZERO(bdelta) || bdelta < 0) && (NEAR_ZERO(sdelta) || sdelta < 0))
+
+    solution.clear();
+    FixOrientations();
+    DoOffset(ldelta, rdelta, tdelta, bdelta, sdelta);
+
+    Clipper clpr;
+    clpr.AddPaths(m_destPolys, ptSubject, true);
+    if (ldelta > 0 || rdelta > 0 || tdelta > 0 || bdelta > 0 || sdelta > 0)
+    {
+        clpr.Execute(ctUnion, solution, pftPositive, pftPositive);
+    }
+    else
+    {
+        IntRect r = clpr.GetBounds();
+        Path outer(4);
+        outer[0] = IntPoint(r.left - 10, r.bottom + 10);
+        outer[1] = IntPoint(r.right + 10, r.bottom + 10);
+        outer[2] = IntPoint(r.right + 10, r.top - 10);
+        outer[3] = IntPoint(r.left - 10, r.top - 10);
+
+        clpr.AddPath(outer, ptSubject, true);
+        clpr.ReverseSolution(true);
+        clpr.Execute(ctUnion, solution, pftNegative, pftNegative);
+        if (solution.size() > 0) solution.erase(solution.begin());
+    }
+}
+
+IntRect ClipperOffsetEx::calcBoundingBox(const Path &path)
+{
+    cInt maxX = -hiRange;
+    cInt minX = hiRange;
+    cInt maxY = -hiRange;
+    cInt minY = hiRange;
+
+    for (const IntPoint& pt: path) {
+        maxX = std::max(pt.X, maxX);
+        minX = std::min(pt.X, minX);
+        maxY = std::max(pt.Y, maxY);
+        minY = std::min(pt.Y, minY);
+    }
+
+    return {minX, minY, maxX, maxY};
+}
+
+std::string ClipperOffsetEx::deduceSegmentRole(const IntPoint &pt1, const IntPoint &pt2, const DoublePoint &normal)
+{
+    const double epsilon = 0.001;
+    if (abs(normal.X-1) < epsilon && abs(normal.Y-0) < epsilon) {
+        if (std::abs(std::abs(pt1.Y-pt2.Y) - std::abs(m_boudingBox.top-m_boudingBox.bottom)) < epsilon) {
+            return "right";
+        }
+    }
+    else if (abs(normal.X-(-1)) < epsilon && abs(normal.Y-0) < epsilon) {
+        if (std::abs(std::abs(pt1.Y-pt2.Y) - std::abs(m_boudingBox.top-m_boudingBox.bottom)) < epsilon) {
+            return "left";
+        }
+    }
+    else if (abs(normal.X-0) < epsilon && abs(normal.Y-1) < epsilon)    {
+        if (std::abs(std::abs(pt1.X-pt2.X) - std::abs(m_boudingBox.left-m_boudingBox.right)) < epsilon) {
+            return "bottom";
+        }
+    }
+    else if (abs(normal.X-0) < epsilon && abs(normal.Y-(-1)) < epsilon) {
+        if (std::abs(std::abs(pt1.X-pt2.X) - std::abs(m_boudingBox.left-m_boudingBox.right)) < epsilon) {
+            return "top";
+        }
+    }
+    return "";
+}
+
+std::string ClipperOffsetEx::matchPatternRegular(int j, int k, double &delta, double &sin, double &cos, double &StepsPerRad)
+{
+    std::string role = deduceSegmentRole(m_srcPoly[j], m_srcPoly[k], m_normals[j]);
+
+    if (role == "left") {
+        delta = m_ldelta;
+        sin = m_lsin;
+        cos = m_lcos;
+        StepsPerRad = m_lStepsPerRad;
+    }
+    else if (role == "right") {
+        delta = m_rdelta;
+        sin = m_rsin;
+        cos = m_rcos;
+        StepsPerRad = m_rStepsPerRad;
+    }
+    else if (role == "top") {
+        delta = m_tdelta;
+        sin = m_tsin;
+        cos = m_tcos;
+        StepsPerRad = m_tStepsPerRad;
+    }
+    else if (role == "bottom") {
+        delta = m_bdelta;
+        sin = m_bsin;
+        cos = m_bcos;
+        StepsPerRad = m_bStepsPerRad;
+    }
+    else {
+        delta = m_sdelta;
+        sin = m_ssin;
+        cos = m_scos;
+        StepsPerRad = m_sStepsPerRad;
+    }
+
+    return role;
+}
+
+std::string ClipperOffsetEx::matchPatternIrregular(int j, int k, double &delta, double &sin, double &cos, double &StepsPerRad)
+{
+    std::string role = deduceSegmentRole(m_srcPoly[j], m_srcPoly[k], m_normals[j]);
+
+    if (role == "") {
+
+        delta = m_deltas[j];
+        sin = m_sins[j];
+        cos = m_coss[j];
+        StepsPerRad = m_StepsPerRads[j];
+
+        if (std::abs(delta) >= sthreshold) { // 大于sthreshold认为是自动跟随
+
+            int len = m_deltas.size();
+
+            // 向前找到可参考的段
+            int fi = j-1;
+            while (1) {
+                int i = (fi+len)%len;
+                if (i == j) {
+                    fi = i;
+                    break;
+                }
+
+                if (std::abs(m_deltas[i]) < sthreshold) {
+                    fi = i;
+                    break;
+                }
+
+                --fi;
+            }
+
+            // 向后找到可参考的段
+            int bi = j+1;
+            while (1) {
+                int i = (bi)%len;
+                if (i == j) {
+                    bi = i;
+                    break;
+                }
+
+                if (std::abs(m_deltas[i]) < sthreshold) {
+                    bi = i;
+                    break;
+                }
+
+                ++bi;
+            }
+
+            // 取较厚的
+            int ri = fi;
+            if (std::abs(m_deltas[fi]) < std::abs(m_deltas[bi])) {
+                ri = bi;
+            }
+
+            if (std::abs(m_deltas[ri]) >= sthreshold) {
+                delta = m_ddelta;
+                sin = m_dsin;
+                cos = m_dcos;
+                StepsPerRad = m_dStepsPerRad;
+            }
+            else {
+                delta = m_deltas[ri];
+                sin = m_sins[ri];
+                cos = m_coss[ri];
+                StepsPerRad = m_StepsPerRads[ri];
+            }
+        }
+    }
+
+    return role;
+}
+
+void ClipperOffsetEx::DoOffset(double ldelta, double rdelta, double tdelta, double bdelta, double sdelta)
+{
+    m_destPolys.clear();
+
+    //if Zero offset, just copy any CLOSED polygons to m_p and return ...
+    if (NEAR_ZERO(ldelta) && NEAR_ZERO(rdelta) && NEAR_ZERO(tdelta) && NEAR_ZERO(bdelta) && NEAR_ZERO(sdelta))
+    {
+        m_destPolys.reserve(m_polyNodes.ChildCount());
+        for (int i = 0; i < m_polyNodes.ChildCount(); i++)
+        {
+            PolyNode& node = *m_polyNodes.Childs[i];
+            if (node.m_endtype == etClosedPolygon)
+                m_destPolys.push_back(node.Contour);
+        }
+        return;
+    }
+
+    //see offset_triginometry3.svg in the documentation folder ...
+    if (MiterLimit > 2) m_miterLim = 2/(MiterLimit * MiterLimit);
+    else m_miterLim = 0.5;
+
+    // ldelta
+    {
+        m_ldelta = ldelta;
+
+        double y;
+        if (ArcTolerance <= 0.0) y = def_arc_tolerance;
+        else if (ArcTolerance > std::fabs(ldelta) * def_arc_tolerance)
+            y = std::fabs(ldelta) * def_arc_tolerance;
+        else y = ArcTolerance;
+        //see offset_triginometry2.svg in the documentation folder ...
+        double steps = pi / std::acos(1 - y / std::fabs(ldelta));
+        if (steps > std::fabs(ldelta) * pi)
+            steps = std::fabs(ldelta) * pi;  //ie excessive precision check
+        m_lsin = std::sin(two_pi / steps);
+        m_lcos = std::cos(two_pi / steps);
+        m_lStepsPerRad = steps / two_pi;
+        if (ldelta < 0.0) m_lsin = -m_lsin;
+    }
+
+    // rdelta
+    {
+        m_rdelta = rdelta;
+
+        double y;
+        if (ArcTolerance <= 0.0) y = def_arc_tolerance;
+        else if (ArcTolerance > std::fabs(rdelta) * def_arc_tolerance)
+            y = std::fabs(rdelta) * def_arc_tolerance;
+        else y = ArcTolerance;
+        //see offset_triginometry2.svg in the documentation folder ...
+        double steps = pi / std::acos(1 - y / std::fabs(rdelta));
+        if (steps > std::fabs(rdelta) * pi)
+            steps = std::fabs(rdelta) * pi;  //ie excessive precision check
+        m_rsin = std::sin(two_pi / steps);
+        m_rcos = std::cos(two_pi / steps);
+        m_rStepsPerRad = steps / two_pi;
+        if (rdelta < 0.0) m_rsin = -m_rsin;
+    }
+
+    // tdelta
+    {
+        m_tdelta = tdelta;
+
+        double y;
+        if (ArcTolerance <= 0.0) y = def_arc_tolerance;
+        else if (ArcTolerance > std::fabs(tdelta) * def_arc_tolerance)
+            y = std::fabs(tdelta) * def_arc_tolerance;
+        else y = ArcTolerance;
+        //see offset_triginometry2.svg in the documentation folder ...
+        double steps = pi / std::acos(1 - y / std::fabs(tdelta));
+        if (steps > std::fabs(tdelta) * pi)
+            steps = std::fabs(tdelta) * pi;  //ie excessive precision check
+        m_tsin = std::sin(two_pi / steps);
+        m_tcos = std::cos(two_pi / steps);
+        m_tStepsPerRad = steps / two_pi;
+        if (tdelta < 0.0) m_tsin = -m_tsin;
+    }
+
+    // bdelta
+    {
+        m_bdelta = bdelta;
+
+        double y;
+        if (ArcTolerance <= 0.0) y = def_arc_tolerance;
+        else if (ArcTolerance > std::fabs(bdelta) * def_arc_tolerance)
+            y = std::fabs(bdelta) * def_arc_tolerance;
+        else y = ArcTolerance;
+        //see offset_triginometry2.svg in the documentation folder ...
+        double steps = pi / std::acos(1 - y / std::fabs(bdelta));
+        if (steps > std::fabs(bdelta) * pi)
+            steps = std::fabs(bdelta) * pi;  //ie excessive precision check
+        m_bsin = std::sin(two_pi / steps);
+        m_bcos = std::cos(two_pi / steps);
+        m_bStepsPerRad = steps / two_pi;
+        if (bdelta < 0.0) m_bsin = -m_bsin;
+    }
+
+    // sdelta
+    {
+        m_sdelta = sdelta;
+
+        if (std::abs(sdelta) < sthreshold) { // 大于sthreshold认为是自动跟随
+            double y;
+            if (ArcTolerance <= 0.0) y = def_arc_tolerance;
+            else if (ArcTolerance > std::fabs(sdelta) * def_arc_tolerance)
+                y = std::fabs(sdelta) * def_arc_tolerance;
+            else y = ArcTolerance;
+            //see offset_triginometry2.svg in the documentation folder ...
+            double steps = pi / std::acos(1 - y / std::fabs(sdelta));
+            if (steps > std::fabs(sdelta) * pi)
+                steps = std::fabs(sdelta) * pi;  //ie excessive precision check
+            m_ssin = std::sin(two_pi / steps);
+            m_scos = std::cos(two_pi / steps);
+            m_sStepsPerRad = steps / two_pi;
+            if (sdelta < 0.0) m_ssin = -m_ssin;
+        }
+    }
+
+    // ddelta
+    {
+        double ddelta = 0.0;
+
+        m_ddelta = ddelta;
+
+        double y;
+        if (ArcTolerance <= 0.0) y = def_arc_tolerance;
+        else if (ArcTolerance > std::fabs(ddelta) * def_arc_tolerance)
+            y = std::fabs(ddelta) * def_arc_tolerance;
+        else y = ArcTolerance;
+        //see offset_triginometry2.svg in the documentation folder ...
+        double steps = pi / std::acos(1 - y / std::fabs(ddelta));
+        if (steps > std::fabs(ddelta) * pi)
+            steps = std::fabs(ddelta) * pi;  //ie excessive precision check
+        m_dsin = std::sin(two_pi / steps);
+        m_dcos = std::cos(two_pi / steps);
+        m_dStepsPerRad = steps / two_pi;
+        if (ddelta < 0.0) m_dsin = -m_dsin;
+    }
+
+    m_destPolys.reserve(m_polyNodes.ChildCount() * 2);
+    for (int i = 0; i < m_polyNodes.ChildCount(); i++)
+    {
+        PolyNode& node = *m_polyNodes.Childs[i];
+        m_srcPoly = node.Contour;
+
+        int len = (int)m_srcPoly.size();
+        if (len < 4) continue;
+
+        //build m_normals ...
+        m_normals.clear();
+        m_normals.reserve(len);
+        for (int j = 0; j < len - 1; ++j)
+            m_normals.push_back(GetUnitNormal(m_srcPoly[j], m_srcPoly[j + 1]));
+        if (node.m_endtype == etClosedLine || node.m_endtype == etClosedPolygon)
+            m_normals.push_back(GetUnitNormal(m_srcPoly[len - 1], m_srcPoly[0]));
+        else
+            m_normals.push_back(DoublePoint(m_normals[len - 2]));
+
+        // 计算
+        m_boudingBox = calcBoundingBox(m_srcPoly);
+
+        // 匹配规则部分的delta
+        {
+            for (int j = 0; j < len; ++j) {
+
+                int k = (j+1)%len;
+                double delta, sin, cos, StepsPerRad;
+
+                matchPatternRegular(j, k, delta, sin, cos, StepsPerRad);
+
+                m_deltas.push_back(delta);
+                m_sins.push_back(sin);
+                m_coss.push_back(cos);
+                m_StepsPerRads.push_back(StepsPerRad);
+
+                k = j;
+            }
+        }
+
+        // 匹配不规则部分的delta
+        {
+            for (int j = 0; j < len; ++j) {
+
+                int k = (j+1)%len;
+                double delta, sin, cos, StepsPerRad;
+
+                std::string role = matchPatternIrregular(j, k, delta, sin, cos, StepsPerRad);
+
+                if (role == "") {
+                    m_deltas[j] = delta;
+                    m_sins[j] = sin;
+                    m_coss[j] = cos;
+                    m_StepsPerRads[j] = StepsPerRad;
+                }
+            }
+        }
+
+        if (node.m_endtype == etClosedPolygon)
+        {
+            int k = len - 1;
+            for (int j = 0; j < len; ++j)
+                OffsetPoint(j, k, node.m_jointype);
+            m_destPolys.push_back(m_destPoly);
+        }
+        else if (node.m_endtype == etClosedLine)
+        {
+            int k = len - 1;
+            for (int j = 0; j < len; ++j)
+                OffsetPoint(j, k, node.m_jointype);
+            m_destPolys.push_back(m_destPoly);
+            m_destPoly.clear();
+            //re-build m_normals ...
+            DoublePoint n = m_normals[len -1];
+            for (int j = len - 1; j > 0; j--)
+                m_normals[j] = DoublePoint(-m_normals[j - 1].X, -m_normals[j - 1].Y);
+            m_normals[0] = DoublePoint(-n.X, -n.Y);
+            k = 0;
+            for (int j = len - 1; j >= 0; j--)
+                OffsetPoint(j, k, node.m_jointype);
+            m_destPolys.push_back(m_destPoly);
+        }
+        else
+        {
+            int k = 0;
+            for (int j = 1; j < len - 1; ++j)
+                OffsetPoint(j, k, node.m_jointype);
+
+            IntPoint pt1;
+            if (node.m_endtype == etOpenButt)
+            {
+                int j = len - 1;
+                pt1 = IntPoint((cInt)Round(m_srcPoly[j].X + m_normals[j].X *
+                                           m_deltas[j]), (cInt)Round(m_srcPoly[j].Y + m_normals[j].Y * m_deltas[j]));
+                m_destPoly.push_back(pt1);
+                pt1 = IntPoint((cInt)Round(m_srcPoly[j].X - m_normals[j].X *
+                                           m_deltas[j]), (cInt)Round(m_srcPoly[j].Y - m_normals[j].Y * m_deltas[j]));
+                m_destPoly.push_back(pt1);
+            }
+            else
+            {
+                int j = len - 1;
+                k = len - 2;
+                m_sinA = 0;
+                m_normals[j] = DoublePoint(-m_normals[j].X, -m_normals[j].Y);
+                if (node.m_endtype == etOpenSquare)
+                    DoSquare(j, k);
+                else
+                    DoRound(j, k);
+            }
+
+            //re-build m_normals ...
+            for (int j = len - 1; j > 0; j--)
+                m_normals[j] = DoublePoint(-m_normals[j - 1].X, -m_normals[j - 1].Y);
+            m_normals[0] = DoublePoint(-m_normals[1].X, -m_normals[1].Y);
+
+            k = len - 1;
+            for (int j = k - 1; j > 0; --j) OffsetPoint(j, k, node.m_jointype);
+
+            if (node.m_endtype == etOpenButt)
+            {
+                pt1 = IntPoint((cInt)Round(m_srcPoly[0].X - m_normals[0].X * m_deltas[0]),
+                        (cInt)Round(m_srcPoly[0].Y - m_normals[0].Y * m_deltas[0]));
+                m_destPoly.push_back(pt1);
+                pt1 = IntPoint((cInt)Round(m_srcPoly[0].X + m_normals[0].X * m_deltas[0]),
+                        (cInt)Round(m_srcPoly[0].Y + m_normals[0].Y * m_deltas[0]));
+                m_destPoly.push_back(pt1);
+            }
+            else
+            {
+                k = 1;
+                m_sinA = 0;
+                if (node.m_endtype == etOpenSquare)
+                    DoSquare(0, 1);
+                else
+                    DoRound(0, 1);
+            }
+            m_destPolys.push_back(m_destPoly);
+        }
+    }
+}
+
+void ClipperOffsetEx::OffsetPoint(int j, int &k, JoinType jointype)
+{
+    double delta = (m_deltas[j] + m_deltas[k])/2.0;
+
+    //cross product ...
+    m_sinA = (m_normals[k].X * m_normals[j].Y - m_normals[j].X * m_normals[k].Y);
+    if (std::fabs(m_sinA * delta) < 1.0)
+    {
+        //dot product ...
+        double cosA = (m_normals[k].X * m_normals[j].X + m_normals[j].Y * m_normals[k].Y );
+        if (cosA > 0) // angle => 0 degrees
+        {
+            m_destPoly.push_back(IntPoint(Round(m_srcPoly[j].X + m_normals[k].X * m_deltas[k]),
+                                          Round(m_srcPoly[j].Y + m_normals[k].Y * m_deltas[j])));
+            return;
+        }
+        //else angle => 180 degrees
+    }
+    else if (m_sinA > 1.0) m_sinA = 1.0;
+    else if (m_sinA < -1.0) m_sinA = -1.0;
+
+    if (m_sinA * delta < 0)
+    {
+        m_destPoly.push_back(IntPoint(Round(m_srcPoly[j].X + m_normals[k].X * m_deltas[k]),
+                                      Round(m_srcPoly[j].Y + m_normals[k].Y * m_deltas[k])));
+        m_destPoly.push_back(m_srcPoly[j]);
+        m_destPoly.push_back(IntPoint(Round(m_srcPoly[j].X + m_normals[j].X * m_deltas[j]),
+                                      Round(m_srcPoly[j].Y + m_normals[j].Y * m_deltas[j])));
+    }
+    else
+        switch (jointype)
+        {
+        case jtMiter:
+        {
+            double r = 1 + (m_normals[j].X * m_normals[k].X +
+                            m_normals[j].Y * m_normals[k].Y);
+            if (r >= m_miterLim) DoMiter(j, k, r); else DoSquare(j, k);
+            break;
+        }
+        case jtSquare: DoSquare(j, k); break;
+        case jtRound: DoRound(j, k); break;
+        }
+    k = j;
+}
+
+void ClipperOffsetEx::DoSquare(int j, int k)
+{
+    double dx = std::tan(std::atan2(m_sinA,
+                                    m_normals[k].X * m_normals[j].X + m_normals[k].Y * m_normals[j].Y) / 4);
+    m_destPoly.push_back(IntPoint(
+                             Round(m_srcPoly[j].X + m_deltas[j] * (m_normals[k].X - m_normals[k].Y * dx)),
+                             Round(m_srcPoly[j].Y + m_deltas[j] * (m_normals[k].Y + m_normals[k].X * dx))));
+    m_destPoly.push_back(IntPoint(
+                             Round(m_srcPoly[j].X + m_deltas[j] * (m_normals[j].X + m_normals[j].Y * dx)),
+                             Round(m_srcPoly[j].Y + m_deltas[j] * (m_normals[j].Y - m_normals[j].X * dx))));
+}
+
+void ClipperOffsetEx::DoMiter(int j, int k, double r)
+{
+    double qj = m_deltas[j] / r;
+    double qk = m_deltas[k] / r;
+    m_destPoly.push_back(IntPoint(Round(m_srcPoly[j].X + m_normals[k].X * qk + m_normals[j].X * qj),
+                                  Round(m_srcPoly[j].Y + m_normals[k].Y * qk + m_normals[j].Y * qj)));
+}
+
+void ClipperOffsetEx::DoRound(int j, int k)
+{
+    double a = std::atan2(m_sinA,
+                          m_normals[k].X * m_normals[j].X + m_normals[k].Y * m_normals[j].Y);
+    int steps = std::max((int)Round(m_StepsPerRads[j] * std::fabs(a)), 1);
+
+    double X = m_normals[k].X, Y = m_normals[k].Y, X2;
+    for (int i = 0; i < steps; ++i)
+    {
+        m_destPoly.push_back(IntPoint(
+                                 Round(m_srcPoly[j].X + X * m_deltas[j]),
+                                 Round(m_srcPoly[j].Y + Y * m_deltas[j])));
+        X2 = X;
+        X = X * m_coss[j] - m_sins[j] * Y;
+        Y = X2 * m_sins[j] + Y * m_coss[j];
+    }
+    m_destPoly.push_back(IntPoint(
+                             Round(m_srcPoly[j].X + m_normals[j].X * m_deltas[j]),
+                             Round(m_srcPoly[j].Y + m_normals[j].Y * m_deltas[j])));
+}
+
 //------------------------------------------------------------------------------
 
 } //ClipperLib namespace

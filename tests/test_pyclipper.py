@@ -311,6 +311,34 @@ class TestPyclipperOffset(TestCase):
         self.assertEqual(len(solution), 0)
 
 
+class TestPyclipperOffsetEx(TestCase):
+
+    @staticmethod
+    def add_path(pc, path):
+        pc.AddPath(path, pyclipper.JT_MITER, pyclipper.ET_CLOSEDPOLYGON)
+
+    def test_execute(self):
+
+        # PATH_CLIP_1 = [[190, 210], [240, 210], [240, 130], [190, 130]]\
+        # [[239, 206], [192, 206], [192, 133], [239, 133]]
+
+        pc = pyclipper.PyclipperOffsetEx()
+        PATH_CLIP_1 = [[200, 200], [220, 200], [220, 100], [260, 100], [260, 30], [200, 30]]
+        # [[255, 95], [215, 95], [215, 195], [202, 195], [202, 33], [255, 33]]
+        self.add_path(pc, PATH_CLIP_1)
+        solution = pc.Execute(-2.0, -1.0, -3.0, -4.0, -5.0)
+        self.assertIsInstance(solution, list)
+        self.assertEqual(len(solution), 1)
+
+    def test_clear(self):
+        pc = pyclipper.PyclipperOffsetEx()
+        self.add_path(pc, PATH_CLIP_1)
+        pc.Clear()
+        solution = pc.Execute(2.0, 1.0, 3.0, 4.0, 5.0)
+        self.assertIsInstance(solution, list)
+        self.assertEqual(len(solution), 0)
+
+
 class TestScalingFunctions(TestCase):
     scale = 2 ** 31
     path = [(0, 0), (1, 1)]
