@@ -48,6 +48,9 @@
 #include <ostream>
 #include <functional>
 
+#include <QLineF>
+#include <QVector2D>
+
 namespace ClipperLib {
 
 static double const pi = 3.141592653589793238;
@@ -4628,9 +4631,13 @@ std::ostream& operator <<(std::ostream &s, const Paths &p)
 
 ClipperOffsetEx::ClipperOffsetEx(double miterLimit, double arcTolerance)
 {
-  this->MiterLimit = miterLimit;
-  this->ArcTolerance = arcTolerance;
-  m_lowest.X = -1;
+    this->MiterLimit = miterLimit;
+    this->ArcTolerance = arcTolerance;
+}
+
+ClipperOffsetEx::~ClipperOffsetEx()
+{
+
 }
 
 void ClipperOffsetEx::Execute(Paths &solution, double ldelta, double rdelta, double tdelta, double bdelta, double sdelta)
@@ -4638,6 +4645,12 @@ void ClipperOffsetEx::Execute(Paths &solution, double ldelta, double rdelta, dou
     // 要求符号相同
     // ((NEAR_ZERO(ldelta) || ldelta > 0) && (NEAR_ZERO(rdelta) || rdelta > 0) && (NEAR_ZERO(tdelta) || tdelta > 0) && (NEAR_ZERO(bdelta) || bdelta > 0) && (NEAR_ZERO(sdelta) || sdelta > 0)) ||
     // ((NEAR_ZERO(ldelta) || ldelta < 0) && (NEAR_ZERO(rdelta) || rdelta < 0) && (NEAR_ZERO(tdelta) || tdelta < 0) && (NEAR_ZERO(bdelta) || bdelta < 0) && (NEAR_ZERO(sdelta) || sdelta < 0))
+
+    if (NEAR_ZERO(ldelta)) ldelta = 1.0 / m_unitFactor;
+    if (NEAR_ZERO(rdelta)) rdelta = 1.0 / m_unitFactor;
+    if (NEAR_ZERO(tdelta)) tdelta = 1.0 / m_unitFactor;
+    if (NEAR_ZERO(bdelta)) bdelta = 1.0 / m_unitFactor;
+    if (NEAR_ZERO(sdelta)) sdelta = 1.0 / m_unitFactor;
 
     solution.clear();
     FixOrientations();
@@ -4682,35 +4695,69 @@ IntRect ClipperOffsetEx::calcBoundingBox(const Path &path)
     return {minX, minY, maxX, maxY};
 }
 
-std::string ClipperOffsetEx::deduceSegmentRole(const IntPoint &pt1, const IntPoint &pt2, const DoublePoint &normal)
+static cInt calcLength(const IntPoint& v) {
+    return sqrt(v.X*v.X + v.Y*v.Y);
+}
+
+std::string ClipperOffsetEx::deduceSegmentRole(int j, int k)
 {
-    const double epsilon = 0.001;
+    const IntPoint pt1 = m_srcPoly[k];
+    const IntPoint pt2 = m_srcPoly[j];
+    const DoublePoint normal = m_normals[k];
+
+    std::string role = "";
+
+    const double epsilon = 0.01;
+
     if (abs(normal.X-1) < epsilon && abs(normal.Y-0) < epsilon) {
-        if (std::abs(std::abs(pt1.Y-pt2.Y) - std::abs(m_boudingBox.top-m_boudingBox.bottom)) < epsilon) {
-            return "right";
+        if ((std::abs(pt1.X - m_boudingBox.right) < epsilon * m_unitFactor) && (std::abs(pt2.X - m_boudingBox.right) < epsilon * m_unitFactor)) {
+            role = "right";
         }
     }
     else if (abs(normal.X-(-1)) < epsilon && abs(normal.Y-0) < epsilon) {
-        if (std::abs(std::abs(pt1.Y-pt2.Y) - std::abs(m_boudingBox.top-m_boudingBox.bottom)) < epsilon) {
-            return "left";
+        if ((std::abs(pt1.X - m_boudingBox.left) < epsilon * m_unitFactor) && (std::abs(pt2.X - m_boudingBox.left) < epsilon * m_unitFactor)) {
+            role = "left";
         }
     }
-    else if (abs(normal.X-0) < epsilon && abs(normal.Y-1) < epsilon)    {
-        if (std::abs(std::abs(pt1.X-pt2.X) - std::abs(m_boudingBox.left-m_boudingBox.right)) < epsilon) {
-            return "bottom";
+    else if (abs(normal.X-0) < epsilon && abs(normal.Y-1) < epsilon) {
+        if ((std::abs(pt1.Y - m_boudingBox.bottom) < epsilon * m_unitFactor) && (std::abs(pt2.Y - m_boudingBox.bottom) < epsilon * m_unitFactor)) {
+            role = "bottom";
         }
     }
     else if (abs(normal.X-0) < epsilon && abs(normal.Y-(-1)) < epsilon) {
-        if (std::abs(std::abs(pt1.X-pt2.X) - std::abs(m_boudingBox.left-m_boudingBox.right)) < epsilon) {
-            return "top";
+        if ((std::abs(pt1.Y - m_boudingBox.top) < epsilon * m_unitFactor) && (std::abs(pt2.Y - m_boudingBox.top) < epsilon * m_unitFactor)) {
+            role = "top";
         }
     }
-    return "";
+
+    /*
+    // 特殊处理
+    if (role != "") {
+
+        // 被弧夹住
+        {
+            int nextK = (k+1)%m_srcPoly.size();
+            int nextJ = (j+1)%m_srcPoly.size();
+
+            int preK = (k-1+m_srcPoly.size())%m_srcPoly.size();
+            int preJ = (j-1+m_srcPoly.size())%m_srcPoly.size();
+
+            IntPoint v1 = IntPoint(Round(m_srcPoly[preJ].X-m_srcPoly[preK].X), Round(m_srcPoly[preJ].Y-m_srcPoly[preK].Y));
+            IntPoint v2 = IntPoint(Round(m_srcPoly[nextJ].X-m_srcPoly[nextK].X), Round(m_srcPoly[nextJ].Y-m_srcPoly[nextK].Y));
+
+            if (calcLength(v1) < 5*m_unitFactor && calcLength(v2) < 5*m_unitFactor) {
+                role = "";
+            }
+        }
+    }
+    */
+
+    return role;
 }
 
 std::string ClipperOffsetEx::matchPatternRegular(int j, int k, double &delta, double &sin, double &cos, double &StepsPerRad)
 {
-    std::string role = deduceSegmentRole(m_srcPoly[j], m_srcPoly[k], m_normals[j]);
+    std::string role = deduceSegmentRole(j, k);
 
     if (role == "left") {
         delta = m_ldelta;
@@ -4748,29 +4795,29 @@ std::string ClipperOffsetEx::matchPatternRegular(int j, int k, double &delta, do
 
 std::string ClipperOffsetEx::matchPatternIrregular(int j, int k, double &delta, double &sin, double &cos, double &StepsPerRad)
 {
-    std::string role = deduceSegmentRole(m_srcPoly[j], m_srcPoly[k], m_normals[j]);
+    std::string role = deduceSegmentRole(j, k);
 
     if (role == "") {
 
-        delta = m_deltas[j];
-        sin = m_sins[j];
-        cos = m_coss[j];
-        StepsPerRad = m_StepsPerRads[j];
+        delta = m_deltas[k];
+        sin = m_sins[k];
+        cos = m_coss[k];
+        StepsPerRad = m_StepsPerRads[k];
 
-        if (std::abs(delta) >= sthreshold) { // 大于sthreshold认为是自动跟随
+        if (std::abs(delta) >= m_sthreshold*m_unitFactor) { // 大于m_sthreshold认为是自动跟随
 
             int len = m_deltas.size();
 
             // 向前找到可参考的段
-            int fi = j-1;
+            int fi = k-1;
             while (1) {
                 int i = (fi+len)%len;
-                if (i == j) {
+                if (i == k) {
                     fi = i;
                     break;
                 }
 
-                if (std::abs(m_deltas[i]) < sthreshold) {
+                if (std::abs(m_deltas[i]) < m_sthreshold*m_unitFactor) {
                     fi = i;
                     break;
                 }
@@ -4779,15 +4826,15 @@ std::string ClipperOffsetEx::matchPatternIrregular(int j, int k, double &delta, 
             }
 
             // 向后找到可参考的段
-            int bi = j+1;
+            int bi = k+1;
             while (1) {
                 int i = (bi)%len;
-                if (i == j) {
+                if (i == k) {
                     bi = i;
                     break;
                 }
 
-                if (std::abs(m_deltas[i]) < sthreshold) {
+                if (std::abs(m_deltas[i]) < m_sthreshold*m_unitFactor) {
                     bi = i;
                     break;
                 }
@@ -4801,7 +4848,7 @@ std::string ClipperOffsetEx::matchPatternIrregular(int j, int k, double &delta, 
                 ri = bi;
             }
 
-            if (std::abs(m_deltas[ri]) >= sthreshold) {
+            if (std::abs(m_deltas[ri]) >= m_sthreshold*m_unitFactor) {
                 delta = m_ddelta;
                 sin = m_dsin;
                 cos = m_dcos;
@@ -4817,6 +4864,107 @@ std::string ClipperOffsetEx::matchPatternIrregular(int j, int k, double &delta, 
     }
 
     return role;
+}
+
+bool ClipperOffsetEx::BelongToMiter(int curJ, int curK, int nextJ, int nextK)
+{
+    IntPoint v1 = IntPoint(Round(m_srcPoly[curJ].X-m_srcPoly[curK].X), Round(m_srcPoly[curJ].Y-m_srcPoly[curK].Y));
+    IntPoint v2 = IntPoint(Round(m_srcPoly[nextJ].X-m_srcPoly[nextK].X), Round(m_srcPoly[nextJ].Y-m_srcPoly[nextK].Y));
+
+    if (Abs(v1.X) < 0.01*m_unitFactor) { v1.X = 0; }
+    if (Abs(v1.Y) < 0.01*m_unitFactor) { v1.Y = 0; }
+
+    if (Abs(v2.X) < 0.01*m_unitFactor) { v2.X = 0; }
+    if (Abs(v2.Y) < 0.01*m_unitFactor) { v2.Y = 0; }
+
+    // 特殊处理直线与弧的交界处
+    float cosA = QVector2D::dotProduct(QVector2D(v1.X, v1.Y).normalized(), QVector2D(v2.X, v2.Y).normalized());
+    if (cosA < 0) {
+        if (calcLength(v1) < 5*m_unitFactor) {
+            return false;
+        }
+
+        if (calcLength(v2) < 5*m_unitFactor) {
+            return false;
+        }
+    }
+
+    return true;
+
+    /*
+    std::string curSegmentRole = deduceSegmentRole(curJ, curK);
+    std::string nextSegmentRole = deduceSegmentRole(nextJ, nextK);
+
+    if (curSegmentRole == "" && nextSegmentRole == "")  {
+        return false;
+    }
+
+    if (curSegmentRole != "" && nextSegmentRole != "") {
+        return false;
+    }
+
+    IntPoint v1 = IntPoint(Round(m_srcPoly[curJ].X-m_srcPoly[curK].X), Round(m_srcPoly[curJ].Y-m_srcPoly[curK].Y));
+    IntPoint v2 = IntPoint(Round(m_srcPoly[nextJ].X-m_srcPoly[nextK].X), Round(m_srcPoly[nextJ].Y-m_srcPoly[nextK].Y));
+
+    if (Abs(v1.X) < 0.01*m_unitFactor) { v1.X = 0; }
+    if (Abs(v1.Y) < 0.01*m_unitFactor) { v1.Y = 0; }
+
+    if (Abs(v2.X) < 0.01*m_unitFactor) { v2.X = 0; }
+    if (Abs(v2.Y) < 0.01*m_unitFactor) { v2.Y = 0; }
+
+    float cosA = QVector2D::dotProduct(QVector2D(v1.X, v1.Y).normalized(), QVector2D(v2.X, v2.Y).normalized());
+    if (cosA < 0) {
+        if (calcLength(v1) < 5*m_unitFactor) {
+            return false;
+        }
+
+        if (calcLength(v2) < 5*m_unitFactor) {
+            return false;
+        }
+    }
+
+    if (v1.X*v1.Y + v2.X*v2.Y == 0) {
+        return false;
+    }
+
+    if (v1.X*v2.Y - v2.X*v1.Y == 0) {
+        return false;
+    }
+
+    return true;
+    */
+}
+
+bool ClipperOffsetEx::MiterPoint(int curJ, int curK, int nextJ, int nextK, IntPoint &miterPoint)
+{
+    IntPoint pt1 = IntPoint(m_srcPoly[curK].X + m_normals[curK].X * m_deltas[curK], m_srcPoly[curK].Y + m_normals[curK].Y * m_deltas[curK]);
+    IntPoint pt2 = IntPoint(m_srcPoly[curJ].X + m_normals[curK].X * m_deltas[curK], m_srcPoly[curJ].Y + m_normals[curK].Y * m_deltas[curK]);
+
+    IntPoint pt3 = IntPoint(m_srcPoly[nextK].X + m_normals[nextK].X * m_deltas[nextK], m_srcPoly[nextK].Y + m_normals[nextK].Y * m_deltas[nextK]);
+    IntPoint pt4 = IntPoint(m_srcPoly[nextJ].X + m_normals[nextK].X * m_deltas[nextK], m_srcPoly[nextJ].Y + m_normals[nextK].Y * m_deltas[nextK]);
+
+    /*
+    cInt denominator = (pt1.X-pt2.X)*(pt3.Y-pt4.Y) - (pt1.Y-pt2.Y)*(pt3.X-pt4.X);
+    if (denominator == 0) {
+        return false;
+    }
+
+    miterPoint.X = Round(((pt1.X*pt2.Y-pt1.Y*pt2.X)*(pt3.X-pt4.X) - (pt1.X-pt2.X)*(pt3.X*pt4.Y-pt3.Y*pt4.X))/denominator);
+    miterPoint.Y = Round(((pt1.X*pt2.Y-pt1.Y*pt2.X)*(pt3.Y-pt4.Y) - (pt1.Y-pt2.Y)*(pt3.X*pt4.Y-pt3.Y*pt4.X))/denominator);
+    */
+
+    QPointF intersectionPoint(0, 0);
+    QLineF line1(pt1.X, pt1.Y, pt2.X, pt2.Y);
+    QLineF line2(pt3.X, pt3.Y, pt4.X, pt4.Y);
+    QLineF::IntersectType type = line1.intersect(line2, &intersectionPoint);
+    if (type == QLineF::NoIntersection) {
+        return false;
+    }
+
+    miterPoint.X = Round(intersectionPoint.x());
+    miterPoint.Y = Round(intersectionPoint.y());
+
+    return true;
 }
 
 void ClipperOffsetEx::DoOffset(double ldelta, double rdelta, double tdelta, double bdelta, double sdelta)
@@ -4920,7 +5068,7 @@ void ClipperOffsetEx::DoOffset(double ldelta, double rdelta, double tdelta, doub
     {
         m_sdelta = sdelta;
 
-        if (std::abs(sdelta) < sthreshold) { // 大于sthreshold认为是自动跟随
+        if (std::abs(sdelta) < m_sthreshold*m_unitFactor) { // 大于m_sthreshold认为是自动跟随
             double y;
             if (ArcTolerance <= 0.0) y = def_arc_tolerance;
             else if (ArcTolerance > std::fabs(sdelta) * def_arc_tolerance)
@@ -4965,7 +5113,7 @@ void ClipperOffsetEx::DoOffset(double ldelta, double rdelta, double tdelta, doub
         m_srcPoly = node.Contour;
 
         int len = (int)m_srcPoly.size();
-        if (len < 4) continue;
+        if (len < 3) continue;
 
         //build m_normals ...
         m_normals.clear();
@@ -4982,9 +5130,9 @@ void ClipperOffsetEx::DoOffset(double ldelta, double rdelta, double tdelta, doub
 
         // 匹配规则部分的delta
         {
-            for (int j = 0; j < len; ++j) {
+            for (int k = 0; k < len; ++k) {
 
-                int k = (j+1)%len;
+                int j = (k+1)%len;
                 double delta, sin, cos, StepsPerRad;
 
                 matchPatternRegular(j, k, delta, sin, cos, StepsPerRad);
@@ -4993,25 +5141,23 @@ void ClipperOffsetEx::DoOffset(double ldelta, double rdelta, double tdelta, doub
                 m_sins.push_back(sin);
                 m_coss.push_back(cos);
                 m_StepsPerRads.push_back(StepsPerRad);
-
-                k = j;
             }
         }
 
         // 匹配不规则部分的delta
         {
-            for (int j = 0; j < len; ++j) {
+            for (int k = 0; k < len; ++k) {
 
-                int k = (j+1)%len;
+                int j = (k+1)%len;
                 double delta, sin, cos, StepsPerRad;
 
                 std::string role = matchPatternIrregular(j, k, delta, sin, cos, StepsPerRad);
 
                 if (role == "") {
-                    m_deltas[j] = delta;
-                    m_sins[j] = sin;
-                    m_coss[j] = cos;
-                    m_StepsPerRads[j] = StepsPerRad;
+                    m_deltas[k] = delta;
+                    m_sins[k] = sin;
+                    m_coss[k] = cos;
+                    m_StepsPerRads[k] = StepsPerRad;
                 }
             }
         }
@@ -5114,6 +5260,7 @@ void ClipperOffsetEx::OffsetPoint(int j, int &k, JoinType jointype)
         {
             m_destPoly.push_back(IntPoint(Round(m_srcPoly[j].X + m_normals[k].X * m_deltas[k]),
                                           Round(m_srcPoly[j].Y + m_normals[k].Y * m_deltas[j])));
+            k = j;
             return;
         }
         //else angle => 180 degrees
@@ -5123,13 +5270,26 @@ void ClipperOffsetEx::OffsetPoint(int j, int &k, JoinType jointype)
 
     if (m_sinA * delta < 0)
     {
-        m_destPoly.push_back(IntPoint(Round(m_srcPoly[j].X + m_normals[k].X * m_deltas[k]),
-                                      Round(m_srcPoly[j].Y + m_normals[k].Y * m_deltas[k])));
-        m_destPoly.push_back(m_srcPoly[j]);
-        m_destPoly.push_back(IntPoint(Round(m_srcPoly[j].X + m_normals[j].X * m_deltas[j]),
-                                      Round(m_srcPoly[j].Y + m_normals[j].Y * m_deltas[j])));
+        int curK = k;
+        int curJ = j;
+
+        int nextK = (curK+1)%m_srcPoly.size();
+        int nextJ = (curJ+1)%m_srcPoly.size();
+
+        IntPoint miterPoint;
+        if (BelongToMiter(curJ, curK, nextJ, nextK) && MiterPoint(curJ, curK, nextJ, nextK, miterPoint)) {
+            m_destPoly.push_back(miterPoint);
+        }
+        else {
+            m_destPoly.push_back(IntPoint(Round(m_srcPoly[j].X + m_normals[k].X * m_deltas[k]),
+                                          Round(m_srcPoly[j].Y + m_normals[k].Y * m_deltas[k])));
+            m_destPoly.push_back(m_srcPoly[j]);
+            m_destPoly.push_back(IntPoint(Round(m_srcPoly[j].X + m_normals[j].X * m_deltas[j]),
+                                          Round(m_srcPoly[j].Y + m_normals[j].Y * m_deltas[j])));
+        }
     }
     else
+    {
         switch (jointype)
         {
         case jtMiter:
@@ -5142,6 +5302,7 @@ void ClipperOffsetEx::OffsetPoint(int j, int &k, JoinType jointype)
         case jtSquare: DoSquare(j, k); break;
         case jtRound: DoRound(j, k); break;
         }
+    }
     k = j;
 }
 
@@ -5159,10 +5320,22 @@ void ClipperOffsetEx::DoSquare(int j, int k)
 
 void ClipperOffsetEx::DoMiter(int j, int k, double r)
 {
-    double qj = m_deltas[j] / r;
-    double qk = m_deltas[k] / r;
-    m_destPoly.push_back(IntPoint(Round(m_srcPoly[j].X + m_normals[k].X * qk + m_normals[j].X * qj),
-                                  Round(m_srcPoly[j].Y + m_normals[k].Y * qk + m_normals[j].Y * qj)));
+    int curK = k;
+    int curJ = j;
+
+    int nextK = (curK+1)%m_srcPoly.size();
+    int nextJ = (curJ+1)%m_srcPoly.size();
+
+    IntPoint miterPoint;
+    if (BelongToMiter(curJ, curK, nextJ, nextK) && MiterPoint(curJ, curK, nextJ, nextK, miterPoint)) {
+        m_destPoly.push_back(miterPoint);
+    }
+    else {
+        double qj = m_deltas[j] / r;
+        double qk = m_deltas[k] / r;
+        m_destPoly.push_back(IntPoint(Round(m_srcPoly[j].X + m_normals[k].X * qk + m_normals[j].X * qj),
+                                      Round(m_srcPoly[j].Y + m_normals[k].Y * qk + m_normals[j].Y * qj)));
+    }
 }
 
 void ClipperOffsetEx::DoRound(int j, int k)
