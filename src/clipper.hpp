@@ -395,13 +395,12 @@ class ClipperOffsetEx: public ClipperOffset // 非等比缩放
 {
 public:
     ClipperOffsetEx(double miterLimit = 2.0, double roundPrecision = 0.25);
+    ~ClipperOffsetEx();
     void Execute(Paths& solution, double ldelta, double rdelta, double tdelta, double bdelta, double sdelta);
 
 private:
-
-    const cInt sthreshold = 99999*1000;
-
     IntRect m_boudingBox;
+    const cInt m_sthreshold = 999;
 
     double m_ldelta, m_lsin, m_lcos, m_lStepsPerRad;
     double m_rdelta, m_rsin, m_rcos, m_rStepsPerRad;
@@ -414,7 +413,7 @@ private:
 
     IntRect calcBoundingBox(const Path& path);
 
-    std::string deduceSegmentRole(const IntPoint &pt1, const IntPoint &pt2, const DoublePoint& normal);
+    std::string deduceSegmentRole(int j, int k);
     std::string matchPatternRegular(int j, int k, double& delta, double& sin, double& cos, double& StepsPerRad);
     std::string matchPatternIrregular(int j, int k, double& delta, double& sin, double& cos, double& StepsPerRad);
 
@@ -423,6 +422,18 @@ private:
     void DoSquare(int j, int k);
     void DoMiter(int j, int k, double r);
     void DoRound(int j, int k);
+
+private:
+    bool BelongToMiter(int curJ, int curK, int nextJ, int nextK);
+    bool MiterPoint(int curJ, int curK, int nextJ, int nextK, IntPoint& miterPoint);
+
+public:
+    void setUnitFactor(cInt v) {
+        m_unitFactor = v;
+    }
+
+private:
+    cInt m_unitFactor = 1000;
 };
 //------------------------------------------------------------------------------
 
