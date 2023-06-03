@@ -30,6 +30,7 @@ class TestPyclipperModule(TestCase):
     def test_has_classes(self):
         self.assertTrue(hasattr(pyclipper, 'Pyclipper'))
         self.assertTrue(hasattr(pyclipper, 'PyclipperOffset'))
+        self.assertTrue(hasattr(pyclipper, 'PyclipperOffsetEx'))
 
     def test_has_namespace_methods(self):
         for method in ('Orientation', 'Area', 'PointInPolygon', 'SimplifyPolygon', 'SimplifyPolygons',
