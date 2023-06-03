@@ -48,9 +48,6 @@
 #include <ostream>
 #include <functional>
 
-#include <QLineF>
-#include <QVector2D>
-
 namespace ClipperLib {
 
 static double const pi = 3.141592653589793238;
@@ -4878,7 +4875,7 @@ bool ClipperOffsetEx::BelongToMiter(int curJ, int curK, int nextJ, int nextK)
     if (Abs(v2.Y) < 0.01*m_unitFactor) { v2.Y = 0; }
 
     // 特殊处理直线与弧的交界处
-    float cosA = QVector2D::dotProduct(QVector2D(v1.X, v1.Y).normalized(), QVector2D(v2.X, v2.Y).normalized());
+    double cosA = v1.X * v2.X + v1.Y * v2.Y;
     if (cosA < 0) {
         if (calcLength(v1) < 5*m_unitFactor) {
             return false;
@@ -4912,7 +4909,7 @@ bool ClipperOffsetEx::BelongToMiter(int curJ, int curK, int nextJ, int nextK)
     if (Abs(v2.X) < 0.01*m_unitFactor) { v2.X = 0; }
     if (Abs(v2.Y) < 0.01*m_unitFactor) { v2.Y = 0; }
 
-    float cosA = QVector2D::dotProduct(QVector2D(v1.X, v1.Y).normalized(), QVector2D(v2.X, v2.Y).normalized());
+    double cosA = v1.X * v2.X + v1.Y * v2.Y;
     if (cosA < 0) {
         if (calcLength(v1) < 5*m_unitFactor) {
             return false;
@@ -4953,16 +4950,27 @@ bool ClipperOffsetEx::MiterPoint(int curJ, int curK, int nextJ, int nextK, IntPo
     miterPoint.Y = Round(((pt1.X*pt2.Y-pt1.Y*pt2.X)*(pt3.Y-pt4.Y) - (pt1.Y-pt2.Y)*(pt3.X*pt4.Y-pt3.Y*pt4.X))/denominator);
     */
 
-    QPointF intersectionPoint(0, 0);
-    QLineF line1(pt1.X, pt1.Y, pt2.X, pt2.Y);
-    QLineF line2(pt3.X, pt3.Y, pt4.X, pt4.Y);
-    QLineF::IntersectType type = line1.intersect(line2, &intersectionPoint);
-    if (type == QLineF::NoIntersection) {
-        return false;
+    IntPoint intersectionPoint;
+    TEdge edge1;
+    TEdge edge2;
+
+    edge1.Curr = pt1;
+    edge1.Top  = pt1;
+    edge1.Bot  = pt2;
+    edge2.Curr = pt3;
+    edge2.Top  = pt3;
+    edge2.Bot  = pt4;
+
+    SetDx(edge1);
+    SetDx(edge2);
+
+    IntersectPoint(edge1, edge2, intersectionPoint);
+    if (intersectionPoint == IntPoint(0, 0)) {
+      return false;
     }
 
-    miterPoint.X = Round(intersectionPoint.x());
-    miterPoint.Y = Round(intersectionPoint.y());
+    miterPoint.X = Round(intersectionPoint.X);
+    miterPoint.Y = Round(intersectionPoint.Y);
 
     return true;
 }
