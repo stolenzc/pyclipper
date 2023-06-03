@@ -867,7 +867,7 @@ cdef class PyclipperOffset:
             self.thisptr.ArcTolerance = value
 
 
-cdef class PyclipperOffsetEx():
+cdef class PyclipperOffsetEx:
     """
     Wraps the ClipperOffsetEx class.
     """
@@ -879,7 +879,7 @@ cdef class PyclipperOffsetEx():
         self.thisptr = new ClipperOffsetEx(miter_limit, arc_tolerance)
 
     def __dealloc__(self):
-        log_action("Deleting the ClipperOffset instance")
+        log_action("Deleting the ClipperOffsetEx instance")
         del self.thisptr
 
     def AddPath(self, path, JoinType join_type, EndType end_type):
