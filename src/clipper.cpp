@@ -47,6 +47,9 @@
 #include <cstdlib>
 #include <ostream>
 #include <functional>
+#include <iostream>
+
+using namespace std;
 
 namespace ClipperLib {
 
