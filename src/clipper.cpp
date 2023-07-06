@@ -4932,6 +4932,58 @@ bool ClipperOffsetEx::BelongToMiter(int curJ, int curK, int nextJ, int nextK)
     */
 }
 
+struct Segment {
+    IntPoint start;
+    IntPoint end;
+};
+
+double crossProduct(IntPoint a, IntPoint b, IntPoint c) {
+    return (b.X - a.X) * (c.Y - a.Y) - (b.Y - a.Y) * (c.X - a.X);
+}
+
+bool isSegmentsIntersect(Segment seg1, Segment seg2) {
+    double c1 = crossProduct(seg1.start, seg1.end, seg2.start);
+    double c2 = crossProduct(seg1.start, seg1.end, seg2.end);
+    double c3 = crossProduct(seg2.start, seg2.end, seg1.start);
+    double c4 = crossProduct(seg2.start, seg2.end, seg1.end);
+
+    return (c1 * c2 < 0) && (c3 * c4 < 0);
+}
+
+IntPoint computeIntersection(Segment seg1, Segment seg2) {
+    IntPoint intersectionPoint;
+    double k1, k2, b1, b2;
+
+    // 判断是否平行
+    if (std::fabs(seg1.start.X - seg1.end.X) < 1e-6) {
+        k2 = (seg2.end.Y - seg2.start.Y) / (seg2.end.X - seg2.start.X);
+        b2 = seg2.start.Y - k2 * seg2.start.X;
+        intersectionPoint.X = seg1.start.X;
+        intersectionPoint.Y = k2 * intersectionPoint.X + b2;
+    } else if (std::fabs(seg2.start.X - seg2.end.X) < 1e-6) {
+        k1 = (seg1.end.Y - seg1.start.Y) / (seg1.end.X - seg1.start.X);
+        b1 = seg1.start.Y - k1 * seg1.start.X;
+        intersectionPoint.X = seg2.start.X;
+        intersectionPoint.Y = k1 * intersectionPoint.X + b1;
+    } else {
+        k1 = (seg1.end.Y - seg1.start.Y) / (seg1.end.X - seg1.start.X);
+        b1 = seg1.start.Y - k1 * seg1.start.X;
+        k2 = (seg2.end.Y - seg2.start.Y) / (seg2.end.X - seg2.start.X);
+        b2 = seg2.start.Y - k2 * seg2.start.X;
+
+        // 判断是否重合
+        if (std::fabs(k1 - k2) < 1e-6 && std::fabs(b1 - b2) < 1e-6) {
+            intersectionPoint.X = seg1.end.X;
+            intersectionPoint.Y = seg1.end.Y;
+        } else {
+            intersectionPoint.X = (b2 - b1) / (k1 - k2);
+            intersectionPoint.Y = k1 * intersectionPoint.X + b1;
+        }
+    }
+
+    return intersectionPoint;
+}
+
 bool ClipperOffsetEx::MiterPoint(int curJ, int curK, int nextJ, int nextK, IntPoint &miterPoint)
 {
     IntPoint pt1 = IntPoint(m_srcPoly[curK].X + m_normals[curK].X * m_deltas[curK], m_srcPoly[curK].Y + m_normals[curK].Y * m_deltas[curK]);
@@ -4951,23 +5003,19 @@ bool ClipperOffsetEx::MiterPoint(int curJ, int curK, int nextJ, int nextK, IntPo
     */
 
     IntPoint intersectionPoint;
-    TEdge edge1;
-    TEdge edge2;
 
-    edge1.Curr = pt1;
-    edge1.Top  = pt1;
-    edge1.Bot  = pt2;
-    edge2.Curr = pt3;
-    edge2.Top  = pt3;
-    edge2.Bot  = pt4;
+    Segment seg1;
+    Segment seg2;
 
-    SetDx(edge1);
-    SetDx(edge2);
+    seg1.start = pt1;
+    seg1.end = pt2;
+    seg2.start = pt3;
+    seg2.end = pt4;
 
-    IntersectPoint(edge1, edge2, intersectionPoint);
-    if (intersectionPoint == IntPoint(0, 0)) {
+    if (!isSegmentsIntersect(seg1, seg2)) {
       return false;
     }
+    intersectionPoint = computeIntersection(seg1, seg2);
 
     miterPoint.X = Round(intersectionPoint.X);
     miterPoint.Y = Round(intersectionPoint.Y);
