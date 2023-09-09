@@ -4941,13 +4941,24 @@ double crossProduct(IntPoint a, IntPoint b, IntPoint c) {
     return (b.X - a.X) * (c.Y - a.Y) - (b.Y - a.Y) * (c.X - a.X);
 }
 
-bool isSegmentsIntersect(Segment seg1, Segment seg2) {
-    double c1 = crossProduct(seg1.start, seg1.end, seg2.start);
-    double c2 = crossProduct(seg1.start, seg1.end, seg2.end);
-    double c3 = crossProduct(seg2.start, seg2.end, seg1.start);
-    double c4 = crossProduct(seg2.start, seg2.end, seg1.end);
+bool intersects(const Segment &l1, const Segment &l2, IntPoint *intersectionPoint)
+{
+    const IntPoint a = l1.end - l1.start;
+    const IntPoint b = l2.start - l2.end;
+    const IntPoint c = l1.start - l2.start;
 
-    return (c1 * c2 < 0) && (c3 * c4 < 0);
+    const double denominator = a.Y * b.X - a.X * b.Y;
+
+    if (denominator == 0 || !std::isfinite(denominator))
+        return false;
+
+    const double reciprocal = 1.0 / denominator;
+    const double na = (b.Y * c.X - b.X * c.Y) * reciprocal;
+    if (intersectionPoint) {
+        IntPoint tempPt = IntPoint(Round(a.X*na), Round(a.Y*na));
+        *intersectionPoint = (l1.start + tempPt);
+    }
+    return true;
 }
 
 IntPoint computeIntersection(Segment seg1, Segment seg2) {
@@ -5012,13 +5023,12 @@ bool ClipperOffsetEx::MiterPoint(int curJ, int curK, int nextJ, int nextK, IntPo
     seg2.start = pt3;
     seg2.end = pt4;
 
-    if (!isSegmentsIntersect(seg1, seg2)) {
+    if (!intersects(seg1, seg2, &intersectionPoint)) {
       return false;
     }
-    intersectionPoint = computeIntersection(seg1, seg2);
 
-    miterPoint.X = Round(intersectionPoint.X);
-    miterPoint.Y = Round(intersectionPoint.Y);
+    miterPoint.X = intersectionPoint.X;
+    miterPoint.Y = intersectionPoint.Y;
 
     return true;
 }

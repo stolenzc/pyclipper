@@ -92,6 +92,14 @@ struct IntPoint {
   IntPoint(cInt x = 0, cInt y = 0): X(x), Y(y) {};
 #endif
 
+  friend inline IntPoint operator+ (const IntPoint& a, const IntPoint& b)
+  {
+    return IntPoint(a.X + b.X, a.Y + b.Y);
+  }
+  friend inline IntPoint operator- (const IntPoint& a, const IntPoint& b)
+  {
+    return IntPoint(a.X - b.X, a.Y - b.Y);
+  }
   friend inline bool operator== (const IntPoint& a, const IntPoint& b)
   {
     return a.X == b.X && a.Y == b.Y;
