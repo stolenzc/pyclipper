@@ -1,11 +1,8 @@
-name: Build + Deploy
+name: Build + Release
 
 on:
   push:
-    branches: [main]
     tags: ["*.*.*"]
-  pull_request:
-    branches: [main]
 
 env:
   CIBW_TEST_REQUIRES: "sympy pytest"
@@ -13,25 +10,25 @@ env:
 
 jobs:
 
-  build_sdist:
-    name: Build Source Distribution
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-      with:
-        # setuptools_scm won't work with shallow clone; fetch all history
-        fetch-depth: 0
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: "3.x"
-    - name: Build sdist
-      run: pipx run build --sdist
-    - name: Check metadata
-      run: pipx run twine check dist/*.tar.gz
-    - uses: actions/upload-artifact@v2
-      with:
-        path: dist/*.tar.gz
+  # build_sdist:
+  #   name: Build Source Distribution
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - uses: actions/checkout@v2
+  #     with:
+  #       # setuptools_scm won't work with shallow clone; fetch all history
+  #       fetch-depth: 0
+  #   - name: Set up Python
+  #     uses: actions/setup-python@v2
+  #     with:
+  #       python-version: "3.x"
+  #   - name: Build sdist
+  #     run: pipx run build --sdist
+  #   - name: Check metadata
+  #     run: pipx run twine check dist/*.tar.gz
+  #   - uses: actions/upload-artifact@v2
+  #     with:
+  #       path: dist/*.tar.gz
 
   build_wheels:
     name: ${{ matrix.type }} ${{ matrix.arch }} on ${{ matrix.os }}
@@ -58,14 +55,14 @@ jobs:
           - os: ubuntu-latest
             arch: auto64
             type: manylinux2010
-            build: "pp37-manylinux* pp38-manylinux* cp310-manylinux*"
+            build: "cp310-manylinux*"
             CIBW_MANYLINUX_X86_64_IMAGE: manylinux2010
             CIBW_MANYLINUX_I686_IMAGE: manylinux2010
           # the manylinux2014 image also contains pypy3.9 and CPython 3.11 and 3.12
           - os: ubuntu-latest
             arch: auto64
             type: manylinux2014
-            build: "pp39-manylinux* cp311-manylinux* cp312-manylinux*"
+            build: "cp311-manylinux* cp312-manylinux*"
             CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
             CIBW_MANYLINUX_I686_IMAGE: manylinux2014
 
@@ -96,72 +93,72 @@ jobs:
         CIBW_MANYLINUX_X86_64_IMAGE: ${{ matrix.CIBW_MANYLINUX_X86_64_IMAGE }}
         CIBW_ARCHS: ${{ matrix.arch }}
         CIBW_SKIP: ${{ matrix.skip }}
-    - uses: actions/upload-artifact@v2
+    - uses: actions/upload-artifact@v3
       with:
         path: wheelhouse/*.whl
 
-  build_arch_wheels:
-    name: py${{ matrix.python }} on ${{ matrix.arch }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # aarch64 uses qemu so it's slow, build each py version in parallel jobs
-        python: [36, 37, 38, 39, 310, 311, 312]
-        arch: [aarch64]
-    steps:
-    - uses: actions/checkout@v2
-      with:
-        fetch-depth: 0
-    - uses: docker/setup-qemu-action@v1.2.0
-      with:
-        platforms: all
-    - name: Install dependencies
-      run: pip install cibuildwheel
-    - name: Build Wheels
-      run: python -m cibuildwheel --output-dir wheelhouse .
-      env:
-        CIBW_BUILD: cp${{ matrix.python }}-manylinux*
-        CIBW_ARCHS: ${{ matrix.arch }}
-    - uses: actions/upload-artifact@v2
-      with:
-        path: wheelhouse/*.whl
+  # build_arch_wheels:
+  #   name: py${{ matrix.python }} on ${{ matrix.arch }}
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     matrix:
+  #       # aarch64 uses qemu so it's slow, build each py version in parallel jobs
+  #       python: [36, 37, 38, 39, 310, 311, 312]
+  #       arch: [aarch64]
+  #   steps:
+  #   - uses: actions/checkout@v2
+  #     with:
+  #       fetch-depth: 0
+  #   - uses: docker/setup-qemu-action@v1.2.0
+  #     with:
+  #       platforms: all
+  #   - name: Install dependencies
+  #     run: pip install cibuildwheel
+  #   - name: Build Wheels
+  #     run: python -m cibuildwheel --output-dir wheelhouse .
+  #     env:
+  #       CIBW_BUILD: cp${{ matrix.python }}-manylinux*
+  #       CIBW_ARCHS: ${{ matrix.arch }}
+  #   - uses: actions/upload-artifact@v2
+  #     with:
+  #       path: wheelhouse/*.whl
 
   deploy:
     name: Upload if tagged commit
     if: startsWith(github.ref, 'refs/tags/')
     # but only if all build jobs completed successfully
-    needs: [build_wheels, build_arch_wheels, build_sdist]
+    needs: [build_wheels]
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v2
-    - uses: actions/download-artifact@v2
+    - uses: actions/download-artifact@v3
       with:
         name: artifact
-        path: dist
+        path: wheelhouse
 
-    - name: Extract release notes from annotated tag message
-      id: release_notes
-      env:
-        # e.g. 0.1.0a1, 1.2.0b2 or 2.3.0rc3, but not 1.0.0
-        PRERELEASE_TAG_PATTERN: "[[:digit:]]+\\.[[:digit:]]+\\.[[:digit:]]+([ab]|rc)[[:digit:]]+"
-      run: |
-        # GH checkout action doesn't preserve tag annotations, we must fetch them
-        # https://github.com/actions/checkout/issues/290
-        git fetch --tags --force
-        # strip leading 'refs/tags/' to get the tag name
-        TAG_NAME="${GITHUB_REF##*/}"
-        # Dump tag message to temporary .md file (excluding the PGP signature at the bottom)
-        TAG_MESSAGE=$(git tag -l --format='%(contents)' $TAG_NAME | sed -n '/-----BEGIN PGP SIGNATURE-----/q;p')
-        echo "$TAG_MESSAGE" > "${{ runner.temp }}/release_notes.md"
-        # if the tag has a pre-release suffix mark the Github Release accordingly
-        if egrep -q "$PRERELEASE_TAG_PATTERN" <<< "$TAG_NAME"; then
-          echo "Tag contains a pre-release suffix"
-          echo "IS_PRERELEASE=true" >> "$GITHUB_ENV"
-        else
-          echo "Tag does not contain pre-release suffix"
-          echo "IS_PRERELEASE=false" >> "$GITHUB_ENV"
-        fi
+  #   - name: Extract release notes from annotated tag message
+  #     id: release_notes
+  #     env:
+  #       # e.g. 0.1.0a1, 1.2.0b2 or 2.3.0rc3, but not 1.0.0
+  #       PRERELEASE_TAG_PATTERN: "[[:digit:]]+\\.[[:digit:]]+\\.[[:digit:]]+([ab]|rc)[[:digit:]]+"
+  #     run: |
+  #       # GH checkout action doesn't preserve tag annotations, we must fetch them
+  #       # https://github.com/actions/checkout/issues/290
+  #       git fetch --tags --force
+  #       # strip leading 'refs/tags/' to get the tag name
+  #       TAG_NAME="${GITHUB_REF##*/}"
+  #       # Dump tag message to temporary .md file (excluding the PGP signature at the bottom)
+  #       TAG_MESSAGE=$(git tag -l --format='%(contents)' $TAG_NAME | sed -n '/-----BEGIN PGP SIGNATURE-----/q;p')
+  #       echo "$TAG_MESSAGE" > "${{ runner.temp }}/release_notes.md"
+  #       # if the tag has a pre-release suffix mark the Github Release accordingly
+  #       if egrep -q "$PRERELEASE_TAG_PATTERN" <<< "$TAG_NAME"; then
+  #         echo "Tag contains a pre-release suffix"
+  #         echo "IS_PRERELEASE=true" >> "$GITHUB_ENV"
+  #       else
+  #         echo "Tag does not contain pre-release suffix"
+  #         echo "IS_PRERELEASE=false" >> "$GITHUB_ENV"
+  #       fi
 
     - name: Create GitHub release
       id: create_release
@@ -176,7 +173,17 @@ jobs:
         draft: false
         prerelease: ${{ env.IS_PRERELEASE }}
 
-    - uses: pypa/gh-action-pypi-publish@v1.4.2
+    # - uses: pypa/gh-action-pypi-publish@v1.4.2
+    #   with:
+    #     user: __token__
+    #     password: ${{ secrets.PYPI_PASSWORD }}
+
+    - name: Upload Release Asset
+      id: upload-release-asset
+      uses: Fhwang0926/upload-release-asset@v1.1.8
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        user: __token__
-        password: ${{ secrets.PYPI_PASSWORD }}
+        upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+        asset_name: wheelhouse/*.whl
+        asset_label: latest
