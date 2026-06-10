@@ -49,18 +49,18 @@ jobs:
           - os: ubuntu-latest
             type: manylinux2014
             arch: auto64
-            build: "cp38-manylinux* cp39-manylinux* cp310-manylinux* cp311-manylinux* cp312-manylinux* cp313-manylinux*"
+            build: "cp38-manylinux* cp39-manylinux* cp310-manylinux* cp311-manylinux* cp312-manylinux* cp313-manylinux* cp314-manylinux*"
             CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
             CIBW_MANYLINUX_I686_IMAGE: manylinux2014
 
           - os: macos-latest
             arch: universal2
-            build: "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-*"
+            build: "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
             skip: "pp*"
 
           - os: windows-latest
             arch: auto32
-            build: "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-*"
+            build: "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
             skip: "pp*"
     steps:
     - uses: actions/checkout@v4
