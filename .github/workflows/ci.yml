@@ -45,22 +45,22 @@ jobs:
         build: ["*"]
         skip: ["pp*"]
         include:
-          # the manylinux2014 docker images contain python3.8 to 3.13
+          # the manylinux2014 docker images contain python3.9 to 3.14
           - os: ubuntu-latest
             type: manylinux2014
             arch: auto64
-            build: "cp38-manylinux* cp39-manylinux* cp310-manylinux* cp311-manylinux* cp312-manylinux* cp313-manylinux* cp314-manylinux*"
+            build: "cp39-manylinux* cp310-manylinux* cp311-manylinux* cp312-manylinux* cp313-manylinux* cp314-manylinux*"
             CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
             CIBW_MANYLINUX_I686_IMAGE: manylinux2014
 
           - os: macos-latest
             arch: universal2
-            build: "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
+            build: "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
             skip: "pp*"
 
           - os: windows-latest
             arch: auto32
-            build: "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
+            build: "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
             skip: "pp*"
     steps:
     - uses: actions/checkout@v4
@@ -191,11 +191,91 @@ jobs:
         name: wheels-python37-windows
         path: wheelhouse/*.whl
 
+  build_python38:
+    name: Python 3.8 Linux wheels
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.x"
+    - name: Install cibuildwheel 3.x for Python 3.8 support
+      run: pip install "cibuildwheel>=3,<4"
+    - name: Build Python 3.8 Wheels
+      run: python -m cibuildwheel --output-dir wheelhouse .
+      env:
+        CIBW_BUILD: "cp38-manylinux*"
+        CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
+        CIBW_MANYLINUX_I686_IMAGE: manylinux2014
+        CIBW_ARCHS: auto64
+    - uses: actions/upload-artifact@v4
+      with:
+        name: wheels-python38-linux
+        path: wheelhouse/*.whl
+
+  build_python38_macos:
+    name: Python 3.8 macOS wheels
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.x"
+    - name: Install cibuildwheel 3.x for Python 3.8 support
+      run: pip install "cibuildwheel>=3,<4"
+    - name: Build Python 3.8 macOS Wheels
+      run: python -m cibuildwheel --output-dir wheelhouse .
+      env:
+        CIBW_BUILD: "cp38-macosx_*"
+        CIBW_ARCHS: "x86_64"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: wheels-python38-macos
+        path: wheelhouse/*.whl
+
+  build_python38_windows:
+    name: Python 3.8 Windows wheels
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.x"
+    - name: Install cibuildwheel 3.x for Python 3.8 support
+      run: pip install "cibuildwheel>=3,<4"
+    - name: Build Python 3.8 Windows Wheels
+      run: python -m cibuildwheel --output-dir wheelhouse .
+      env:
+        CIBW_BUILD: "cp38-win*"
+        CIBW_ARCHS: auto32
+    - uses: actions/upload-artifact@v4
+      with:
+        name: wheels-python38-windows
+        path: wheelhouse/*.whl
+
   deploy:
     name: Upload if tagged commit
     if: startsWith(github.ref, 'refs/tags/')
     # but only if all build jobs completed successfully
-    needs: [build_wheels, build_python37, build_python37_macos, build_python37_windows]
+    needs: [build_wheels, build_python37, build_python37_macos, build_python37_windows, build_python38, build_python38_macos, build_python38_windows]
     runs-on: ubuntu-latest
 
     steps:
